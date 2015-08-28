@@ -169,7 +169,16 @@ namespace XMPP.common
 
             CleanupState();
 
-            _hostname = new HostName(_manager.Settings.Hostname);
+            try
+            {
+                _hostname = new HostName(_manager.Settings.Hostname);
+            }
+            catch
+            {
+                ConnectionError(ErrorType.InvalidHostName, ErrorPolicyType.Deactivate);
+                return;
+            }
+
             _manager.Socket.Control.KeepAlive = false;
 
             var protection = _manager.Settings.OldSSL ? SocketProtectionLevel.SslAllowNullEncryption : SocketProtectionLevel.PlainSocket;
@@ -210,8 +219,8 @@ namespace XMPP.common
 
             if (synchronized) // Wait for completion
             {
-                _elevateMutex.WaitOne();
-                _manager.Socket.OutputStream.WriteAsync(sendBuffer).AsTask().Wait(10000);
+                _elevateMutex.WaitOne(4000);
+                _manager.Socket.OutputStream.WriteAsync(sendBuffer).AsTask().Wait(4000);
             }
             else // wait for last task and start new one
             {
@@ -220,7 +229,7 @@ namespace XMPP.common
                 {
                     try
                     {
-                        _socketWriter.AsTask().Wait(10000);
+                        _socketWriter.AsTask().Wait(4000);
                     }
                     catch
                     {
@@ -232,7 +241,7 @@ namespace XMPP.common
                     }
                 }
 
-                _elevateMutex.WaitOne();
+                _elevateMutex.WaitOne(4000);
 
                 if (IsConnected)
                 {
@@ -244,11 +253,19 @@ namespace XMPP.common
 
         private void SocketRead()
 		{
-            if (!IsConnected) return;
-            _elevateMutex.WaitOne();
+            try
+            {
 
-            _socketReader = _manager.Socket.InputStream.ReadAsync(_socketReadBuffer, _bufferSize, InputStreamOptions.Partial);
-            _socketReader.Completed = OnSocketReaderCompleted;
+                if (!IsConnected) return;
+                _elevateMutex.WaitOne(4000);
+
+                _socketReader = _manager.Socket.InputStream.ReadAsync(_socketReadBuffer, _bufferSize, InputStreamOptions.Partial);
+                _socketReader.Completed = OnSocketReaderCompleted;
+            }
+            catch
+            {
+                ConnectionError(ErrorType.ConnectToServerFailed, ErrorPolicyType.Reconnect);
+            }
 		}
 
         private void SocketElevate()
@@ -265,7 +282,7 @@ namespace XMPP.common
             {
                 try
                 {
-                    _socketWriter.AsTask().Wait(10000);
+                    _socketWriter.AsTask().Wait(4000);
                 }
                 catch
                 {
@@ -288,6 +305,8 @@ namespace XMPP.common
             _manager.ProcessComplete.Set();
 
             _elevateMutex.Set();
+
+            _manager.Parser.Clear();
 
             if (_socketConnector != null) _socketConnector.Cancel();
             if (_socketElevator != null) _socketElevator.Cancel();
@@ -365,7 +384,7 @@ namespace XMPP.common
                 dataReader.DetachBuffer();
 
                 // Check if it is a keepalive
-                if (readBytes.Length != 1 && readBytes[0] != 0)
+                if ( !(readBytes.Length == 1 && (readBytes[0] == 0 || readBytes[0] == ' ') ) )
                 {
                     // Trim
                     readBytes = readBytes.TrimNull();

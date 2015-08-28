@@ -59,15 +59,21 @@ namespace XMPP.common
 
                 Tag newElement = Tag.Get(fragment);
 
+                if (newElement == null)
+                    newElement = Tag.Get(fragment);
+
                 if (newElement != null)
                 {
                     newElement.Timestamp = DateTime.Now;
-                    newElement.Account = _manager.Settings.Id.Bare;
+                    newElement.Account = _manager.Settings.Account;
                     _manager.Events.NewTag(this, newElement);
                 }
                 else
                 {
-                    _manager.Events.Error(this, ErrorType.InvalidXMLFragment, ErrorPolicyType.Informative, "Parsing a fragment failed");
+                    if( _manager.State.GetType() == typeof(states.RunningState) )
+                        _manager.Events.Error(this, ErrorType.InvalidXMLFragment, ErrorPolicyType.Informative, "Parsing a fragment failed");
+                    else
+                        _manager.Events.Error(this, ErrorType.InvalidXMLFragment, ErrorPolicyType.Reconnect, "Parsing a fragment failed in a critical situation");
                 }
             }
             while (!string.IsNullOrEmpty(fragment));
@@ -84,10 +90,17 @@ namespace XMPP.common
             // Stream gets opened
             if (data.Contains("<stream:stream"))
             {
+                _dataQueue = string.Empty;
                 data = data.Substring(data.IndexOf("<stream:stream"));
                 int posStreamTagEnd = FirstOfUnEscaped(data, '>');
                 data = data.Insert(posStreamTagEnd + 1, "</stream:stream>");
                 _streamStarted = true;
+            }
+
+            if (_dataQueue.Length == 0 && !data.StartsWith("<"))
+            {
+                _manager.Events.Error(this, ErrorType.InvalidXMLFragment, ErrorPolicyType.Reconnect, "Parsing a fragment failed in a critical situation");
+                return;
             }
 
             // Add opened stream
